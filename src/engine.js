@@ -38,7 +38,8 @@ function pick(type, cap, used, opts, prefer, recent) {
     if (prefer === "high" && e.intensity === cap) w = 3;
     if (prefer === "low" && e.intensity === 1) w = 2;
     // Par défaut on évite ce qui vient d'être fait ; profil "prévisible" : au contraire, on le reprend.
-    if (recent.includes(e.id)) w *= opts.familiar ? 2 : opts.novelty ? 0.1 : 0.3;
+    // Mode « repères » : on reprend ; « nouveauté » : on évite fort ; « mix » : on varie le milieu.
+    if (recent.includes(e.id)) w *= { reperes: 2, nouveaute: 0.1, mix: 0.2 }[opts.mode] ?? 0.3;
     return w;
   });
 }
@@ -50,10 +51,16 @@ function fixedOrPick(id, cap, used, opts, prefer, recent) {
 
 const totalSec = (steps, ready) => steps.reduce((a, s) => a + s.sec + ready, 0);
 
-export function buildSession({ energy, stateId, level, minutes, opts = {}, recent = [] }) {
+export function buildSession({ energy, stateId, level, minutes, opts = {}, recent = [], previous = [] }) {
   const st = STATE_BY_ID[stateId];
   const cap = capFor(energy, level, st);
-  const min = minutes ?? Math.min(DEFAULT_MIN[energy - 1], st.maxMin);
+  let min = minutes ?? Math.min(DEFAULT_MIN[energy - 1], st.maxMin);
+  let note = null;
+  // Énergie en montagnes russes : un jour « à fond » ne doit pas préparer un jour à plat.
+  if (opts.pacing && energy === 5 && minutes == null && min > 12) {
+    min = 12;
+    note = "Jour à fond : je plafonne à 12 min pour te garder de la réserve pour demain.";
+  }
   const ready = opts.ready || READY_SEC;
   const stepSec = min <= 3 || opts.shortSteps ? 30 : 40;
   const n = Math.max(3, Math.round((min * 60) / (stepSec + ready)));
@@ -66,12 +73,20 @@ export function buildSession({ energy, stateId, level, minutes, opts = {}, recen
   const used = new Set();
   const add = (e) => (used.add(e.id), { ex: e, sec: stepSec });
   const steps = [add(fixedOrPick(st.start, cap, used, opts, st.prefer, recent))];
-  for (let i = 0; i < n - 2; i++) {
+  // Mode « repères » : on reprend le milieu de la dernière séance faite dans cet état.
+  if (opts.mode === "reperes") {
+    for (const id of previous.slice(1, -1)) {
+      const e = EX_BY_ID[id];
+      if (steps.length - 1 < n - 2 && e && allowed(e, opts) && e.intensity <= cap && !used.has(id)) steps.push(add(e));
+    }
+    if (steps.length > 1) note ??= "Même séance que la dernière fois dans cet état : tu sais ce qui t'attend.";
+  }
+  for (let i = steps.length - 1; i < n - 2; i++) {
     steps.push(add(pick(cycle[i % cycle.length], cap, used, opts, st.prefer, recent)));
   }
   steps.push(add(fixedOrPick(st.end, cap, used, opts, st.prefer, recent)));
 
-  return { kind: "gen", stateId, energy, cap, title: st.title, why: st.why, emoji: st.emoji, steps, ready, totalSec: totalSec(steps, ready) };
+  return { kind: "gen", stateId, energy, cap, title: st.title, why: st.why, emoji: st.emoji, steps, ready, note, mode: opts.mode, totalSec: totalSec(steps, ready) };
 }
 
 export function quickSession(q, level, opts, recent) {

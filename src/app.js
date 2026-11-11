@@ -5,11 +5,13 @@
 //   · le temps est toujours visible (anneau, total restant)
 //   · une consigne à la fois, dite à voix haute
 //   · tout effort compte, rien ne se remet jamais à zéro
+//   · le but long terme est visible : la routine, par paliers
 // ════════════════════════════════════════════════════════════════
 import { STATES, ENERGY, QUICK, LEVELS, BADGES } from "./data.js";
 import { buildSession, quickSession, swapStep, reward, hive, insights, weekDays, fmtDur, fmtClock, READY_SEC, CELLS_PER_COMB, HONEY_PER_CELL } from "./engine.js";
 import { askCoach, sessionFromCoach, guessFromText } from "./coach.js";
-import { QUIZ, draftFrom, applyQuiz, tuneFor, prefsFor, adaptations } from "./profile.js";
+import { QUIZ, TRAITS, FREQ, draftFrom, prefill, applyQuiz, tuneFor, prefsFor, adaptations, traitsOf } from "./profile.js";
+import { STAGES, ANCHORS, DAY_LABELS, UP_AFTER, stageOf, newRoutine, evaluate, weekStart, planText, icsFor, energyInsights, SLOT_LABEL } from "./routine.js";
 import * as store from "./store.js";
 import * as fx from "./fx.js";
 
@@ -18,16 +20,27 @@ let S = store.load();
 const ui = {
   screen: S.profile.onboarded ? "main" : "onboard",
   tab: "home", energy: null, mood: null, session: null, result: null,
-  quiz: null, quizStep: 0, coachText: "", coachBusy: false,
+  quiz: null, quizStep: 0, coachText: "", coachBusy: false, modeToday: null,
+  ext: null,
 };
 let P = null; // lecteur de séance en cours
 
+const EXT = [
+  ["marche", "🚶", "Marche"], ["course", "🏃", "Course"], ["velo", "🚴", "Vélo"], ["salle", "🏋️", "Salle, muscu"],
+  ["natation", "🏊", "Natation"], ["collectif", "⚽", "Sport co"], ["danse", "💃", "Danse"], ["yoga", "🧘", "Yoga, pilates"],
+  ["combat", "🥊", "Combat"], ["autre", "✨", "Autre"],
+];
+const EXT_MIN = [10, 20, 30, 45, 60, 90];
+
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const tune = () => tuneFor(S.profile);
-const opts = () => ({ quiet: S.profile.quiet, noFloor: S.profile.noFloor, ...tune() });
-const vib = (pattern) => { if (!S.profile.calm) vib(pattern); };
+const mode = () => ui.modeToday ?? tune().mode;
+const opts = () => ({ quiet: S.profile.quiet, noFloor: S.profile.noFloor, ...tune(), mode: mode() });
+const vib = (pattern) => { if (!S.profile.calm) fx.buzz(pattern); };
 const recent = () => S.logs.slice(-3).flatMap((l) => l.exIds || []);
+const previousFor = (stateId) => [...S.logs].reverse().find((l) => l.kind === "gen" && l.stateId === stateId)?.exIds || [];
 const persist = () => store.save(S);
+const num = (x) => x.toFixed(1).replace(".", ",");
 const DAY = 864e5;
 
 function toast(msg) {
@@ -37,12 +50,12 @@ function toast(msg) {
   t.setAttribute("role", "status");
   t.textContent = msg;
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 2800);
+  setTimeout(() => t.remove(), 3200);
 }
 
 // ── Rendu ───────────────────────────────────────────────────────
 function render() {
-  const views = { onboard: viewOnboard, quiz: viewQuiz, player: viewPlayer, done: viewDone, main: viewMain };
+  const views = { onboard: viewOnboard, quiz: viewQuiz, player: viewPlayer, done: viewDone, ext: viewExt, main: viewMain };
   root.innerHTML = views[ui.screen]();
   if (ui.screen === "player") paintStep();
 }
@@ -55,12 +68,12 @@ function viewOnboard() {
     <p class="lead">Bouge selon ton énergie du moment. Ton cerveau suit.</p>
     <ul class="promises">
       <li><b>2 taps</b> et ta séance est prête. Rien à planifier.</li>
+      <li><b>Une routine par paliers</b>, de 2 minutes à une vraie pratique du sport.</li>
       <li><b>Jamais de série à perdre.</b> Ce que tu as gagné reste gagné.</li>
-      <li><b>2 minutes comptent.</b> Vraiment.</li>
     </ul>
-    <button class="btn primary big" data-action="quiz-open">Régler Buzz pour moi <small>6 questions, 1 min</small></button>
+    <button class="btn primary big" data-action="quiz-open">Régler Buzz pour moi <small>8 questions, 2 min</small></button>
     <button class="btn ghost" data-action="ob-skip">Passer, je verrai plus tard</button>
-    <p class="fine">Buzz n'est pas un dispositif médical et ne remplace ni un suivi, ni un traitement. En cas de douleur, on arrête.</p>
+    <p class="fine">Buzz n'est pas un dispositif médical, ne pose pas de diagnostic et ne remplace ni un suivi, ni un traitement. En cas de douleur, on arrête.</p>
   </main>`;
 }
 
@@ -74,35 +87,47 @@ function viewQuiz() {
     </div>`;
 
   if (i >= QUIZ.length) {
-    const preview = applyQuiz({ ...S.profile }, a), lines = adaptations(preview);
+    const preview = applyQuiz(structuredClone(S.profile), a), lines = adaptations(preview);
     return `
     <main class="page quiz">${top}
       <h1>C'est réglé${a.name.trim() ? ", " + esc(a.name.trim()) : ""}</h1>
-      <p class="sub">${lines.length ? "Voilà ce que tes réponses changent :" : "Réglages standards pour commencer. Buzz s'ajustera avec tes retours après chaque séance."}</p>
-      ${lines.length ? `<ul class="adapt">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
+      <p class="sub">Tu démarres au palier ${preview.routine.stage} · <b>${stageOf(preview.routine).name}</b> : ${stageOf(preview.routine).goal}</p>
+      ${lines.length ? `<p class="sub">Ce que tes réponses changent :</p><ul class="adapt">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : `<p class="sub">Réglages standards pour commencer. Buzz s'ajustera avec tes retours après chaque séance.</p>`}
       <button class="btn primary big" data-action="q-done">C'est parti</button>
-      <p class="fine">Tes réponses restent sur cet appareil. Tu peux refaire le questionnaire dans les Réglages.</p>
+      <p class="fine">Tes réponses restent sur cet appareil. Tu peux refaire le questionnaire dans les Réglages : ton fonctionnement bouge, tes réglages aussi.</p>
     </main>`;
   }
 
   const q = QUIZ[i];
-  const picked = (v) => (q.kind === "multi" ? a[q.id].includes(v) : a[q.id] === v);
+  let body;
+  if (q.kind === "text") {
+    body = `<input id="q-name" class="q-input" type="text" autocomplete="given-name" maxlength="24" value="${esc(a.name)}" placeholder="Comme tu veux" aria-label="${q.title}" />`;
+  } else if (q.kind === "scale") {
+    body = `<div class="scale">${TRAITS.filter((t) => t.group === q.id).map((t) => `
+      <div class="trait" role="group" aria-label="${esc(t.label)}">
+        <p>${t.label}</p>
+        <div class="seg3 tight">${FREQ.map((f) => `
+          <button class="opt ${a.traits[t.id] === f.v ? "on" : ""}" data-action="q-scale" data-v="${t.id}:${f.v}" aria-pressed="${a.traits[t.id] === f.v}"><b>${f.label}</b></button>`).join("")}
+        </div>
+      </div>`).join("")}</div>`;
+  } else {
+    const picked = (v) => (q.kind === "multi" ? a[q.id].includes(v) : String(a[q.id]) === String(v));
+    body = `<div class="qopts">${q.options.map((o) => `
+      <button class="qopt ${picked(o.v) ? "on" : ""}" data-action="q-pick" data-v="${o.v}" aria-pressed="${picked(o.v)}">
+        <b>${o.label}</b><small>${o.sub}</small></button>`).join("")}</div>`;
+  }
   return `
   <main class="page quiz">${top}
     <h1>${q.title}</h1>
     ${q.sub ? `<p class="sub">${q.sub}</p>` : ""}
-    ${q.kind === "text"
-      ? `<input id="q-name" class="q-input" type="text" autocomplete="given-name" maxlength="24" value="${esc(a.name)}" placeholder="Comme tu veux" aria-label="${q.title}" />`
-      : `<div class="qopts">${q.options.map((o) => `
-          <button class="qopt ${picked(o.v) ? "on" : ""}" data-action="q-pick" data-v="${o.v}" aria-pressed="${picked(o.v)}">
-            <b>${o.label}</b><small>${o.sub}</small></button>`).join("")}</div>`}
+    ${body}
     ${q.kind !== "one" ? `<button class="btn primary big" data-action="q-next">Continuer</button>` : ""}
   </main>`;
 }
 
 function viewMain() {
-  const body = { home: viewHome, hive: viewHive, settings: viewSettings }[ui.tab]();
-  const tabs = [["home", "🏃", "Bouger"], ["hive", "🍯", "Ruche"], ["settings", "⚙️", "Réglages"]];
+  const body = { home: viewHome, routine: viewRoutine, hive: viewHive, settings: viewSettings }[ui.tab]();
+  const tabs = [["home", "🏃", "Bouger"], ["routine", "🗓️", "Routine"], ["hive", "🍯", "Ruche"], ["settings", "⚙️", "Réglages"]];
   return `
   <main class="page">${body}</main>
   <nav class="nav">${tabs.map(([id, ic, label]) => `
@@ -114,8 +139,9 @@ function viewMain() {
 function viewHome() {
   const last = S.logs.at(-1);
   const back = last && Date.now() - last.t >= 3 * DAY;
-  const s = ui.session, t = tune();
-  const askQuiz = !S.profile.q?.done && !S.profile.quizLater;
+  const s = ui.session, t = tune(), m = mode();
+  const askQuiz = S.profile.q?.v !== 2 && !S.profile.quizLater2;
+  const ev = evaluate(S.profile.routine, S.logs);
   return `
   <header class="top">
     <div><h1>Salut${S.profile.name ? " " + esc(S.profile.name) : ""} 👋</h1><p class="sub">Deux taps, et je m'occupe du reste.</p></div>
@@ -124,9 +150,14 @@ function viewHome() {
   ${back ? `<p class="banner">Content de te revoir. Aucun retard à rattraper : on reprend là, maintenant.</p>` : ""}
 
   ${askQuiz ? `<section class="card nudge">
-    <p><b>Nouveau : règle Buzz sur ton fonctionnement.</b> 6 questions, 1 minute, et les séances s'adaptent à ton type de TDAH.</p>
+    <p><b>${S.profile.q?.done ? "Le questionnaire a changé." : "Règle Buzz sur ton fonctionnement."}</b> Un profil nuancé (on peut être « entre deux ») et une routine par paliers vers le sport régulier. 2 minutes.</p>
     <div class="row2"><button class="btn primary" data-action="quiz-open">Répondre</button><button class="btn ghost" data-action="quiz-later">Plus tard</button></div>
   </section>` : ""}
+
+  ${ev ? `<button class="card strip" data-action="tab" data-v="routine">
+    <span class="strip-l"><small>Palier ${ev.stage.n} · ${ev.stage.name}</small><b>${esc(planText(S.profile.routine))}</b></span>
+    <span class="strip-r"><b>${ev.week.days}/${ev.stage.days}</b><small>jours</small></span>
+  </button>` : ""}
 
   <section class="card">
     <h2><span class="num">1</span>Ton énergie, là, maintenant</h2>
@@ -138,10 +169,11 @@ function viewHome() {
 
   <section class="card">
     <h2><span class="num">2</span>Et dans ta tête ?</h2>
-    <div class="chips">${STATES.map((m) => `
-      <button class="chip ${ui.mood === m.id ? "on" : ""}" data-action="mood" data-v="${m.id}" aria-pressed="${ui.mood === m.id}">
-        <span aria-hidden="true">${m.emoji}</span> ${m.label}</button>`).join("")}
+    <div class="chips">${STATES.map((st) => `
+      <button class="chip ${ui.mood === st.id ? "on" : ""}" data-action="mood" data-v="${st.id}" aria-pressed="${ui.mood === st.id}">
+        <span aria-hidden="true">${st.emoji}</span> ${st.label}</button>`).join("")}
     </div>
+    ${ui.energy && !s?.ai ? `<button class="link" data-action="note-check">📝 Juste noter mon état, sans bouger</button>` : ""}
   </section>
 
   <section class="card coach">
@@ -155,6 +187,14 @@ function viewHome() {
     <div class="tag">Ta séance${s.ai ? " · coach IA" : ""}</div>
     <h2 class="prop-title"><span aria-hidden="true">${s.emoji}</span> ${s.title}<span class="dur">${fmtDur(s.totalSec)}</span></h2>
     <p class="why">${esc(s.why)}</p>
+    ${s.note ? `<p class="note good">${esc(s.note)}</p>` : ""}
+    ${t.showMode && !s.ai ? `
+    <div class="modes">
+      <span>Aujourd'hui, plutôt :</span>
+      <button class="chip sm ${m === "reperes" ? "on" : ""}" data-action="mode" data-v="reperes" aria-pressed="${m === "reperes"}">🔁 Repères</button>
+      <button class="chip sm ${m === "nouveaute" ? "on" : ""}" data-action="mode" data-v="nouveaute" aria-pressed="${m === "nouveaute"}">🎲 Nouveauté</button>
+    </div>
+    ${m === "mix" ? `<small>Entre les deux : même structure que d'habitude, exercices du milieu variés.</small>` : ""}` : ""}
     <details ${t.listOpen ? "open" : ""}><summary>Voir les ${s.steps.length} exercices</summary>
       <ol class="steps">${s.steps.map((st) => `<li><span aria-hidden="true">${st.ex.emoji}</span> ${st.ex.name} <small>${st.sec} s</small></li>`).join("")}</ol>
     </details>
@@ -175,7 +215,114 @@ function viewHome() {
   <div class="quick">${t.tiles.map((id) => QUICK.find((k) => k.id === id)).map((q) => `
     <button class="tile" data-action="quick" data-v="${q.id}">
       <span class="em" aria-hidden="true">${q.emoji}</span><b>${q.label}</b><small>${q.sub}</small></button>`).join("")}
-  </div>`;
+  </div>
+  <button class="btn ghost" data-action="ext-open">➕ J'ai fait du sport ailleurs</button>`;
+}
+
+function bar(label, v, goal, unit = "") {
+  const pct = goal ? Math.min(100, (v / goal) * 100) : 100;
+  return `<div class="goalbar ${v >= goal ? "met" : ""}"><div><span>${label}</span><b>${v}${unit} / ${goal}${unit}${v >= goal ? " ✓" : ""}</b></div><div class="bar"><i style="width:${pct}%"></i></div></div>`;
+}
+
+function viewRoutine() {
+  const r = S.profile.routine;
+  if (!r) {
+    return `
+    <header class="top"><div><h1>Ta routine</h1><p class="sub">De 2 minutes à une vraie pratique du sport.</p></div></header>
+    <section class="card">
+      <p>Buzz te fait avancer par <b>5 paliers</b>. On monte quand l'objectif tient 2 semaines. On n'est jamais puni : une semaine ratée ne retire rien.</p>
+      <button class="btn primary big" data-action="r-start">Commencer au palier 1</button>
+      <button class="btn ghost" data-action="quiz-open">Régler avec le questionnaire</button>
+    </section>
+    ${stagesList(0)}`;
+  }
+  const ev = evaluate(r, S.logs), st = ev.stage, w = ev.week, days = weekDays(S.logs);
+  return `
+  <header class="top"><div><h1>Ta routine</h1><p class="sub">Palier ${st.n} sur ${STAGES.length} · ${st.name}</p></div></header>
+
+  ${ev.canUp ? `<section class="card nudge">
+    <p><b>Tu as tenu ton objectif ${ev.okCount} semaines.</b> On passe au palier ${st.n + 1}, ${STAGES[st.n].name} ? ${esc(STAGES[st.n].goal)}</p>
+    <div class="row2"><button class="btn primary" data-action="r-up">On monte</button><button class="btn ghost" data-action="r-snooze">Je reste ici</button></div>
+  </section>` : ""}
+  ${ev.canDown ? `<section class="card nudge soft">
+    <p><b>Ces deux dernières semaines ont été plus dures.</b> C'est normal, ça arrive. On allège au palier ${st.n - 1} sans rien perdre de ton miel ni de tes badges ?</p>
+    <div class="row2"><button class="btn primary" data-action="r-down">On allège</button><button class="btn ghost" data-action="r-snooze">Je garde</button></div>
+  </section>` : ""}
+
+  <section class="card">
+    <h2>Cette semaine</h2>
+    <p class="sub">${esc(st.goal)}</p>
+    ${bar("Jours actifs", w.days, st.days)}
+    ${st.min ? bar("Minutes", w.minutes, st.min, " min") : ""}
+    ${st.long ? bar(`Séances de ${st.longMin} min ou plus`, w.long, st.long) : ""}
+    <div class="week">${days.map((d) => `<div class="day ${d.on ? "on" : ""} ${d.today ? "today" : ""}"><i>${d.on ? "🍯" : ""}</i><small>${d.label}</small></div>`).join("")}</div>
+    <p class="sub">${w.days >= st.days && w.minutes >= st.min && w.long >= st.long
+      ? "Objectif tenu cette semaine. Tout ce qui vient en plus est du bonus."
+      : `Semaines réussies à ce palier : ${ev.okCount}/${UP_AFTER} pour proposer le suivant.`}</p>
+  </section>
+
+  <section class="card">
+    <h2>Ton plan</h2>
+    <p class="plan">« ${esc(planText(r))} »</p>
+    <div class="field">Ton moment
+      <div class="chips">${Object.entries(ANCHORS).map(([k, a]) => `<button class="chip sm ${r.anchor === k ? "on" : ""}" data-action="r-anchor" data-v="${k}" aria-pressed="${r.anchor === k}">${a.label}</button>`).join("")}</div>
+    </div>
+    <div class="field">Tes jours <span>(${r.days.length} choisis, objectif ${st.days})</span>
+      <div class="days">${DAY_LABELS.map((l, k) => `<button class="opt ${r.days.includes(k) ? "on" : ""}" data-action="r-day" data-v="${k}" aria-pressed="${r.days.includes(k)}" aria-label="${["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"][k]}"><b>${l}</b></button>`).join("")}</div>
+    </div>
+    <label class="field">Heure du rappel
+      <input id="r-time" type="time" value="${r.time || ""}" /></label>
+    <button class="btn primary" data-action="r-ics" ${r.time && r.days.length ? "" : "disabled"}>📅 Ajouter le rappel à mon calendrier</button>
+    <p class="fine">Un rappel dans ton calendrier est un repère extérieur : il fait le travail de mémoire à ta place. Si tu changes ton plan, ajoute-le à nouveau et supprime l'ancien.</p>
+  </section>
+
+  <button class="btn ghost big" data-action="ext-open">➕ J'ai fait du sport ailleurs</button>
+
+  ${stagesList(st.n)}
+
+  <section class="card about">
+    <h2>Comment ça marche</h2>
+    <ul>
+      <li><b>Une habitude se construit en semaines,</b> souvent deux mois, parfois bien plus. C'est normal que ce soit long.</li>
+      <li><b>Rater un jour ne change presque rien.</b> Ce qui compte, c'est de ne pas laisser filer des semaines entières.</li>
+      <li><b>Accrocher le mouvement à un moment qui existe déjà</b> (« après mon café… ») aide à passer à l'acte sans y penser.</li>
+      <li><b>Le sport hors de l'appli compte.</b> Le but final, c'est une pratique à toi : course, salle, vélo, sport co…</li>
+    </ul>
+  </section>`;
+}
+
+function stagesList(current) {
+  return `<section class="card"><h2>Le chemin</h2><ol class="stages">${STAGES.map((s) => `
+    <li class="${s.n < current ? "past" : s.n === current ? "cur" : ""}">
+      <span class="sn">${s.n < current ? "✓" : s.n}</span>
+      <div><b>${s.name}</b><small>${esc(s.goal)}</small>${s.n === current ? `<small class="why">${esc(s.why)}</small>` : ""}</div>
+    </li>`).join("")}</ol></section>`;
+}
+
+function viewExt() {
+  const x = ui.ext;
+  return `
+  <main class="page quiz">
+    <div class="p-top"><button class="icon" data-action="ext-cancel" aria-label="Retour">←</button></div>
+    <h1>Du sport ailleurs</h1>
+    <p class="sub">Ça compte dans ta semaine, comme une séance Buzz.</p>
+    <section class="card">
+      <h2>Quoi ?</h2>
+      <div class="chips">${EXT.map(([k, e, l]) => `<button class="chip ${x.act === k ? "on" : ""}" data-action="ext-act" data-v="${k}" aria-pressed="${x.act === k}"><span aria-hidden="true">${e}</span> ${l}</button>`).join("")}</div>
+    </section>
+    <section class="card">
+      <h2>Combien de temps ?</h2>
+      <div class="chips">${EXT_MIN.map((m) => `<button class="chip ${x.min === m ? "on" : ""}" data-action="ext-min" data-v="${m}" aria-pressed="${x.min === m}">${m < 60 ? m + " min" : m / 60 + " h" + (m % 60 ? " 30" : "")}</button>`).join("")}</div>
+    </section>
+    <section class="card">
+      <h2>Ton énergie maintenant ? <small>facultatif</small></h2>
+      <div class="row5">${ENERGY.map((e) => `
+        <button class="opt ${x.after === e.v ? "on" : ""}" data-action="ext-after" data-v="${e.v}" aria-pressed="${x.after === e.v}">
+          <span class="em" aria-hidden="true">${e.emoji}</span><small>${e.label}</small></button>`).join("")}
+      </div>
+    </section>
+    <button class="btn primary big" data-action="ext-save" ${x.act && x.min ? "" : "disabled"}>Ajouter à ma semaine</button>
+  </main>`;
 }
 
 function viewPlayer() {
@@ -210,6 +357,7 @@ function viewPlayer() {
 function viewDone() {
   const { r, log, newBadges, completed, session, newCells } = ui.result;
   const delta = log.energyAfter && log.energyBefore ? log.energyAfter - log.energyBefore : null;
+  const ev = evaluate(S.profile.routine, S.logs);
   return `
   <main class="page done">
     <div class="done-emoji" aria-hidden="true">${completed ? "🎉" : "👍"}</div>
@@ -220,6 +368,7 @@ function viewDone() {
       <div class="big-honey">+${r.total} 🍯</div>
       <ul class="lines">${r.lines.map((l) => `<li class="${l.surprise ? "surprise" : ""}"><span>${l.surprise ? "✨ " : ""}${l.label}</span><b>+${l.v}</b></li>`).join("")}</ul>
       ${newCells > 0 ? `<p class="cells">${newCells} nouvelle${newCells > 1 ? "s" : ""} alvéole${newCells > 1 ? "s" : ""} dans ta ruche</p>` : ""}
+      ${ev ? `<p class="cells">Routine : ${ev.week.days}/${ev.stage.days} jours cette semaine${ev.stage.min ? ` · ${ev.week.minutes}/${ev.stage.min} min` : ""}</p>` : ""}
     </section>
 
     ${newBadges.length ? `<section class="card newbadges">${newBadges.map((b) => `
@@ -253,7 +402,7 @@ function viewHive() {
   const h = hive(S.honey);
   const minutes = Math.round(S.logs.reduce((a, l) => a + l.sec, 0) / 60);
   const ins = insights(S.logs);
-  const days = weekDays(S.logs);
+  const met = energyInsights(S.logs, S.checks);
   const hist = S.logs.slice(-5).reverse();
   return `
   <header class="top"><div><h1>Ta ruche</h1><p class="sub">Rayon ${h.comb} · ${h.filled}/${CELLS_PER_COMB} alvéoles</p></div>
@@ -268,20 +417,23 @@ function viewHive() {
   <div class="stats">
     <div class="stat"><b>${S.logs.length}</b><small>séance${S.logs.length > 1 ? "s" : ""}</small></div>
     <div class="stat"><b>${minutes}</b><small>min bougées</small></div>
-    <div class="stat"><b>${days.filter((d) => d.on).length}</b><small>jour${days.filter((d) => d.on).length > 1 ? "s" : ""} cette semaine</small></div>
+    <div class="stat"><b>${Object.keys(S.badges).length}</b><small>badge${Object.keys(S.badges).length > 1 ? "s" : ""}</small></div>
   </div>
 
   <section class="card">
-    <h2>Cette semaine</h2>
-    <div class="week">${days.map((d) => `<div class="day ${d.on ? "on" : ""} ${d.today ? "today" : ""}"><i>${d.on ? "🍯" : ""}</i><small>${d.label}</small></div>`).join("")}</div>
-    <p class="sub">Pas de série à tenir. Chaque jour bougé est un bonus.</p>
+    <h2>Ta météo intérieure</h2>
+    ${met.slots ? `
+      <div class="slots">${met.slots.map((s) => `<div class="slot ${met.best?.k === s.k ? "best" : ""}"><div class="vbar"><i style="height:${s.a ? (s.a / 5) * 100 : 0}%"></i></div><b>${s.a ? num(s.a) : "–"}</b><small>${SLOT_LABEL[s.k]}</small></div>`).join("")}</div>
+      <p class="sub">${met.best ? `Ton énergie est souvent meilleure <b>${SLOT_LABEL[met.best.k]}</b> : bon créneau pour tes séances plus longues.` : "Pas encore de moment qui se détache. Continue de noter."} <small>(${met.count} relevés)</small></p>
+      ${met.swings >= 2 ? `<p class="note">Montagnes russes repérées : ${met.swings} fois, un jour à fond a été suivi d'un jour à plat dans les 48 h. Les jours à fond, garde de la marge.</p>` : ""}`
+      : `<p class="sub">Note ton énergie quelques fois (avant une séance, ou avec « Juste noter mon état ») et je te montre tes moments forts de la journée. ${met.count}/5 relevés.</p>`}
   </section>
 
   <section class="card">
     <h2>Ce que ton corps t'apprend</h2>
     ${ins ? `
-      <p class="insight"><b>${ins.delta >= 0 ? "+" : ""}${ins.delta.toFixed(1).replace(".", ",")}</b> point d'énergie en moyenne après avoir bougé <small>(${ins.count} séances notées)</small></p>
-      ${ins.best ? `<p class="sub">Ce qui te réussit le mieux : <b>${ins.best.title}</b> (+${ins.best.delta.toFixed(1).replace(".", ",")}).</p>` : ""}`
+      <p class="insight"><b>${ins.delta >= 0 ? "+" : ""}${num(ins.delta)}</b> point d'énergie en moyenne après avoir bougé <small>(${ins.count} séances notées)</small></p>
+      ${ins.best ? `<p class="sub">Ce qui te réussit le mieux : <b>${esc(ins.best.title)}</b> (+${num(ins.best.delta)}).</p>` : ""}`
       : `<p class="sub">Note ton énergie après 2 séances et je te montre ce que le mouvement change vraiment chez toi.</p>`}
   </section>
 
@@ -301,6 +453,8 @@ function viewSettings() {
   const sw = (key, label, sub) => `
     <button class="switch" role="switch" aria-checked="${p[key]}" data-action="toggle" data-v="${key}">
       <span><b>${label}</b><small>${sub}</small></span><i></i></button>`;
+  const lines = adaptations(p), T = traitsOf(p);
+  const often = TRAITS.filter((t) => T[t.id] >= 1);
   return `
   <header class="top"><div><h1>Réglages</h1><p class="sub">Tout est modifiable, rien n'est obligatoire.</p></div></header>
 
@@ -315,11 +469,10 @@ function viewSettings() {
   </section>
 
   <section class="card">
-    <h2>Ton profil</h2>
-    ${S.profile.q?.done
-      ? (adaptations(S.profile).length ? `<ul class="adapt">${adaptations(S.profile).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : `<p class="sub">Réglages standards.</p>`)
-      : `<p class="sub">6 questions pour adapter les séances à ton type de TDAH et à ton fonctionnement.</p>`}
-    <button class="btn ghost" data-action="quiz-open">${S.profile.q?.done ? "Refaire le questionnaire" : "Répondre au questionnaire"}</button>
+    <h2>Ton fonctionnement</h2>
+    ${often.length ? `<ul class="traits-sum">${often.map((t) => `<li><span>${t.label}</span><b>${T[t.id] === 2 ? "Souvent" : "Ça dépend"}</b></li>`).join("")}</ul>` : ""}
+    ${lines.length ? `<p class="sub">Ce que ça change :</p><ul class="adapt">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : `<p class="sub">Réglages standards. Le questionnaire (2 min) adapte les séances à ton fonctionnement.</p>`}
+    <button class="btn ghost" data-action="quiz-open">${p.q?.done ? "Refaire le questionnaire" : "Répondre au questionnaire"}</button>
   </section>
 
   <section class="card switches">
@@ -336,11 +489,11 @@ function viewSettings() {
     <ul>
       <li><b>Démarrer est le plus dur.</b> Donc 2 taps, aucune planification, et une option « juste 2 min ».</li>
       <li><b>L'énergie change tout le temps.</b> Donc la séance se construit sur ton état du moment, pas sur un programme.</li>
+      <li><b>Le fonctionnement aussi change.</b> Beaucoup de personnes TDAH fluctuent, et TDAH et autisme vont souvent ensemble. Donc pas de case unique : des traits en « ça dépend », et un choix chaque jour entre repères et nouveauté.</li>
       <li><b>Le temps est flou.</b> Donc il est toujours visible : anneau, durée restante, durée totale annoncée.</li>
-      <li><b>La routine lasse vite.</b> Donc les exercices tournent, et tu peux en changer d'un tap.</li>
-      <li><b>Les séries cassées font abandonner.</b> Donc rien ne se remet à zéro, et revenir après une pause est récompensé.</li>
+      <li><b>Les séries cassées font abandonner.</b> Donc rien ne se remet à zéro, et la routine avance par paliers, jamais par punition.</li>
     </ul>
-    <p class="fine">Buzz n'est pas un dispositif médical et ne remplace ni un suivi, ni un traitement. Ton historique reste sur cet appareil ; seul ce que tu écris au coach IA est envoyé pour composer la séance.</p>
+    <p class="fine">Buzz n'est pas un dispositif médical et ne pose pas de diagnostic. Si tu te poses des questions sur un TDAH ou un TSA, un médecin (généraliste, psychiatre) peut t'orienter vers une évaluation. Ton historique reste sur cet appareil ; seul ce que tu écris au coach IA est envoyé pour composer la séance.</p>
   </section>
 
   <button class="btn danger" data-action="reset">Effacer toutes mes données</button>`;
@@ -463,23 +616,29 @@ function finish(completed) {
     render();
     return toast("Pas grave. Reviens quand tu veux.");
   }
-  const now = Date.now(), last = S.logs.at(-1);
-  const comeback = !!last && now - last.t >= 3 * DAY;
-  const firstToday = !S.logs.some((l) => new Date(l.t).toDateString() === new Date(now).toDateString());
-  const r = reward({ sec, completed, comeback, firstToday });
-  const log = { t: now, kind: session.kind, stateId: session.stateId, title: session.title, sec, completed, energyBefore: session.energy, energyAfter: null, feel: null, honey: r.total, comeback, exIds, ai: !!session.ai };
-  const cellsBefore = Math.floor(S.honey / HONEY_PER_CELL);
-  S.honey += r.total;
-  S.logs.push(log);
-  const newBadges = grantBadges();
-  persist();
-  ui.result = { r, log, newBadges, completed, session, newCells: Math.floor(S.honey / HONEY_PER_CELL) - cellsBefore };
+  const { log, r, newBadges, newCells } = addLog({ kind: session.kind, stateId: session.stateId, title: session.title, sec, completed, energyBefore: session.energy, exIds, ai: !!session.ai });
+  ui.result = { r, log, newBadges, completed, session, newCells };
   ui.screen = "done";
   render();
   window.scrollTo(0, 0);
   if (!S.profile.calm) fx.confetti(document.body);
   if (S.profile.sound) fx.chime();
   vib([60, 40, 120]);
+}
+
+// Une entrée d'historique (séance Buzz ou sport ailleurs) : miel, badges, sauvegarde.
+function addLog(entry, rewardSec = entry.sec) {
+  const now = Date.now(), last = S.logs.at(-1);
+  const comeback = !!last && now - last.t >= 3 * DAY;
+  const firstToday = !S.logs.some((l) => new Date(l.t).toDateString() === new Date(now).toDateString());
+  const r = reward({ sec: rewardSec, completed: entry.completed, comeback, firstToday });
+  const log = { t: now, energyAfter: null, feel: null, exIds: [], ...entry, honey: r.total, comeback };
+  const cellsBefore = Math.floor(S.honey / HONEY_PER_CELL);
+  S.honey += r.total;
+  S.logs.push(log);
+  const newBadges = grantBadges();
+  persist();
+  return { log, r, newBadges, newCells: Math.floor(S.honey / HONEY_PER_CELL) - cellsBefore };
 }
 
 function grantBadges() {
@@ -492,7 +651,7 @@ function grantBadges() {
 // ── Actions ─────────────────────────────────────────────────────
 function propose(minutes) {
   if (!ui.energy || !ui.mood) return;
-  ui.session = buildSession({ energy: ui.energy, stateId: ui.mood, level: S.profile.level, minutes, opts: opts(), recent: recent() });
+  ui.session = buildSession({ energy: ui.energy, stateId: ui.mood, level: S.profile.level, minutes, opts: opts(), recent: recent(), previous: previousFor(ui.mood) });
 }
 
 function showProp() {
@@ -500,16 +659,34 @@ function showProp() {
   document.getElementById("prop")?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
+function setStage(n) {
+  const r = S.profile.routine;
+  r.stage = n;
+  r.stageSince = Date.now();
+  const target = stageOf(r).days;
+  if (r.days.length < target) r.days = [...new Set([...r.days, ...[0, 2, 4, 1, 3, 5, 6]])].slice(0, target).sort((a, b) => a - b);
+  const got = grantBadges();
+  persist();
+  render();
+  window.scrollTo(0, 0);
+  if (got.length) toast(`Badge : ${got.map((b) => b.name).join(", ")}`);
+}
+
 const actions = {
   "ob-skip": () => { S.profile.onboarded = true; persist(); ui.screen = "main"; render(); },
   "quiz-open": () => { Object.assign(ui, { screen: "quiz", quiz: draftFrom(S.profile), quizStep: 0 }); render(); window.scrollTo(0, 0); },
-  "quiz-later": () => { S.profile.quizLater = true; persist(); render(); },
+  "quiz-later": () => { S.profile.quizLater2 = true; persist(); render(); },
   "q-back": () => {
     if (ui.quizStep > 0) ui.quizStep--;
     else ui.screen = S.profile.onboarded ? "main" : "onboard"; // rien n'est enregistré avant la fin
     render();
   },
-  "q-next": () => { ui.quizStep++; render(); window.scrollTo(0, 0); },
+  "q-next": () => {
+    if (QUIZ[ui.quizStep]?.id === "labels") prefill(ui.quiz);
+    ui.quizStep++;
+    render();
+    window.scrollTo(0, 0);
+  },
   "q-pick": (v) => {
     const q = QUIZ[ui.quizStep], a = ui.quiz;
     if (q.kind === "multi") {
@@ -521,12 +698,20 @@ const actions = {
     render();
     window.scrollTo(0, 0);
   },
+  "q-scale": (v) => {
+    const [id, val] = v.split(":"), t = ui.quiz.traits;
+    t[id] = t[id] === +val ? null : +val; // re-taper efface
+    const y = window.scrollY;
+    render();
+    window.scrollTo(0, y);
+  },
   "q-done": () => {
     applyQuiz(S.profile, ui.quiz);
     S.profile.onboarded = true;
+    grantBadges();
     persist();
-    Object.assign(ui, { screen: "main", tab: "home", quiz: null });
-    if (ui.session) propose();
+    Object.assign(ui, { screen: "main", tab: "home", quiz: null, modeToday: null });
+    if (ui.session && !ui.session.ai) propose();
     render();
     window.scrollTo(0, 0);
   },
@@ -534,6 +719,20 @@ const actions = {
   energy: (v) => { ui.energy = +v; ui.inferred = false; propose(); showProp(); },
   mood: (v) => { ui.mood = v; ui.inferred = false; propose(); showProp(); },
   reroll: () => { propose(); showProp(); },
+  mode: (v) => {
+    ui.modeToday = ui.modeToday === v ? null : v;
+    propose();
+    const y = window.scrollY;
+    render();
+    window.scrollTo(0, y);
+  },
+  "note-check": () => {
+    S.checks.push({ t: Date.now(), energy: ui.energy, mood: ui.mood });
+    persist();
+    Object.assign(ui, { energy: null, mood: null, session: null });
+    render();
+    toast("Noté. Ça nourrit ta météo intérieure.");
+  },
   coach: async () => {
     const text = ui.coachText.trim();
     if (ui.coachBusy) return;
@@ -543,18 +742,19 @@ const actions = {
     let s = null;
     if (S.profile.ai) {
       try {
-        const now = Date.now();
+        const now = Date.now(), t = tune();
         s = sessionFromCoach(await askCoach({
           text, energy: ui.inferred ? null : ui.energy, mood: ui.inferred ? null : ui.mood, level: S.profile.level,
-          quiet: S.profile.quiet, noFloor: S.profile.noFloor, simple: tune().simple, prefs: prefsFor(tune()), hour: new Date().getHours(),
+          quiet: S.profile.quiet, noFloor: S.profile.noFloor, simple: t.simple, prefs: prefsFor(t, mode()), hour: new Date().getHours(),
           history: S.logs.slice(-8).map((l) => ({ title: l.title, min: Math.round(l.sec / 60), energyBefore: l.energyBefore, energyAfter: l.energyAfter, feel: l.feel, daysAgo: Math.floor((now - l.t) / DAY) })),
-        }), tune().ready);
+        }), t.ready);
       } catch { /* hors ligne, serveur absent ou refus : on passe aux règles locales */ }
     }
     if (!s) {
       const g = guessFromText(text);
       const mine = !ui.inferred; // ce que la personne a coché elle-même passe avant la devinette
-      s = buildSession({ energy: (mine && ui.energy) || g.energy, stateId: (mine && ui.mood) || g.stateId, level: S.profile.level, minutes: g.minutes, opts: opts(), recent: recent() });
+      const stateId = (mine && ui.mood) || g.stateId;
+      s = buildSession({ energy: (mine && ui.energy) || g.energy, stateId, level: S.profile.level, minutes: g.minutes, opts: opts(), recent: recent(), previous: previousFor(stateId) });
       if (S.profile.ai) toast("Coach IA injoignable : séance préparée sans lui.");
     }
     ui.coachBusy = false;
@@ -603,29 +803,73 @@ const actions = {
     startPlayer(buildSession({ energy: s.energy, stateId: s.stateId, level: S.profile.level, minutes: 3, opts: opts(), recent: recent() }));
   },
   finish: () => {
-    Object.assign(ui, { screen: "main", tab: "hive", energy: null, mood: null, session: null, result: null });
+    Object.assign(ui, { screen: "main", tab: S.profile.routine ? "routine" : "hive", energy: null, mood: null, session: null, result: null, modeToday: null });
     render();
     window.scrollTo(0, 0);
   },
-  level: (v) => { S.profile.level = +v; persist(); if (ui.session) propose(); render(); },
-  toggle: (v) => { S.profile[v] = !S.profile[v]; persist(); if (ui.session) propose(); render(); },
+  // Routine
+  "r-start": () => { S.profile.routine = newRoutine("bouger", S.profile.level, "libre"); persist(); render(); },
+  "r-up": () => setStage(S.profile.routine.stage + 1),
+  "r-down": () => setStage(S.profile.routine.stage - 1),
+  "r-snooze": () => { S.profile.routine.snooze = weekStart(Date.now()); persist(); render(); },
+  "r-anchor": (v) => { const r = S.profile.routine; r.anchor = v; r.time = ANCHORS[v].time ?? r.time; persist(); render(); },
+  "r-day": (v) => {
+    const r = S.profile.routine, d = +v;
+    r.days = r.days.includes(d) ? r.days.filter((x) => x !== d) : [...r.days, d].sort((a, b) => a - b);
+    persist();
+    render();
+  },
+  "r-ics": () => {
+    const r = S.profile.routine;
+    if (!r.time || !r.days.length) return;
+    const url = location.origin + location.pathname;
+    const blob = new Blob([icsFor(r, url)], { type: "text/calendar;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "buzz-routine.ics";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    toast("Ouvre le fichier pour l'ajouter à ton calendrier.");
+  },
+  // Sport ailleurs
+  "ext-open": () => { Object.assign(ui, { screen: "ext", ext: { act: null, min: null, after: null }, from: ui.tab }); render(); window.scrollTo(0, 0); },
+  "ext-cancel": () => { ui.screen = "main"; render(); },
+  "ext-act": (v) => { ui.ext.act = v; render(); },
+  "ext-min": (v) => { ui.ext.min = +v; render(); },
+  "ext-after": (v) => { ui.ext.after = ui.ext.after === +v ? null : +v; render(); },
+  "ext-save": () => {
+    const x = ui.ext, [, emoji, label] = EXT.find(([k]) => k === x.act);
+    const { r, newBadges } = addLog({ kind: "ext", stateId: null, title: `${emoji} ${label}`, sec: x.min * 60, completed: true, energyBefore: null, energyAfter: x.after }, Math.min(x.min, 45) * 60);
+    Object.assign(ui, { screen: "main", tab: S.profile.routine ? "routine" : "hive", ext: null });
+    render();
+    window.scrollTo(0, 0);
+    toast(`+${r.total} 🍯, ajouté à ta semaine${newBadges.length ? ` · Badge : ${newBadges.map((b) => b.name).join(", ")}` : ""}`);
+    if (!S.profile.calm) fx.confetti(document.body);
+  },
+  level: (v) => { S.profile.level = +v; persist(); if (ui.session && !ui.session.ai) propose(); render(); },
+  toggle: (v) => { S.profile[v] = !S.profile[v]; persist(); if (ui.session && !ui.session.ai) propose(); render(); },
   reset: () => {
-    if (!confirm("Effacer ton miel, tes badges et ton historique ? C'est définitif.")) return;
+    if (!confirm("Effacer ton miel, tes badges, ta routine et ton historique ? C'est définitif.")) return;
     S = store.reset();
-    Object.assign(ui, { screen: "onboard", tab: "home", energy: null, mood: null, session: null, result: null, quiz: null, quizStep: 0 });
+    Object.assign(ui, { screen: "onboard", tab: "home", energy: null, mood: null, session: null, result: null, quiz: null, quizStep: 0, modeToday: null });
     render();
   },
 };
 
 root.addEventListener("click", (e) => {
   const b = e.target.closest("[data-action]");
-  if (b) actions[b.dataset.action]?.(b.dataset.v);
+  if (b && !b.disabled) actions[b.dataset.action]?.(b.dataset.v);
 });
 
 root.addEventListener("input", (e) => {
   if (e.target.id === "q-name") ui.quiz.name = e.target.value;
   if (e.target.id === "coach-text") ui.coachText = e.target.value;
   if (e.target.id === "set-name") { S.profile.name = e.target.value.trim(); persist(); }
+});
+
+root.addEventListener("change", (e) => {
+  if (e.target.id === "r-time") { S.profile.routine.time = e.target.value || null; persist(); render(); }
 });
 
 // Écran verrouillé ou onglet caché pendant une séance : on met en pause plutôt que de laisser filer le temps.

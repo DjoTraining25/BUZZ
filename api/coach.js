@@ -75,8 +75,10 @@ const PREFS = {
   shortSteps: "exercices courts et variés : prévois environ un exercice par tranche de 35 secondes",
   coordBoost: "aime les exercices de coordination, qui accrochent son attention",
   burst: "a besoin de décharger : place du cardio tôt dans la séance si son énergie le permet",
-  familiar: "préfère le prévisible : reprends des exercices de ses dernières séances, évite les surprises",
-  novelty: "se lasse vite : varie nettement par rapport à ses dernières séances",
+  mode_reperes: "préfère le prévisible aujourd'hui : reprends des exercices de ses dernières séances, évite les surprises",
+  mode_nouveaute: "a besoin de nouveauté aujourd'hui : varie nettement par rapport à ses dernières séances",
+  mode_mix: "a besoin à la fois de repères et de nouveauté : garde une structure habituelle (échauffement doux, fin calme, rythme régulier) et varie les exercices du milieu",
+  pacing: "énergie en montagnes russes : si elle est à fond, propose 12 minutes maximum pour garder de la réserve",
   simple: "coordination et équilibre lui coûtent : mouvements simples uniquement",
   startHard: "démarrer est le plus dur pour elle : en cas de doute, propose plus court",
 };

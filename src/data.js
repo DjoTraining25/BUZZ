@@ -164,6 +164,9 @@ export const BADGES = [
   { id: "back", emoji: "🪃", name: "Retour gagnant", desc: "Revenu·e après une pause de 3 jours ou plus", test: (s) => s.logs.some((l) => l.comeback) },
   { id: "week3", emoji: "📅", name: "Trois jours", desc: "3 jours actifs dans la même semaine", test: (s) => maxDaysInAWeek(s.logs) >= 3 },
   { id: "up", emoji: "📈", name: "Preuve par le corps", desc: "Énergie plus haute après qu'avant, 3 fois", test: (s) => s.logs.filter((l) => l.energyAfter && l.energyBefore && l.energyAfter > l.energyBefore).length >= 3 },
+  { id: "terrain", emoji: "🏟️", name: "Sur le terrain", desc: "Du sport noté hors de l'appli", test: (s) => s.logs.some((l) => l.kind === "ext") },
+  { id: "ancre", emoji: "⚓", name: "Ancré·e", desc: "Palier 2 de la routine atteint", test: (s) => (s.profile.routine?.stage || 0) >= 2 },
+  { id: "regulier", emoji: "🏅", name: "Régulier·e", desc: "Palier 5 : le repère de l'OMS", test: (s) => (s.profile.routine?.stage || 0) >= 5 },
   { id: "night", emoji: "🦉", name: "Oiseau de nuit", desc: "Une descente vers le sommeil", test: (s) => s.logs.some((l) => l.kind === "dodo") },
 ];
 

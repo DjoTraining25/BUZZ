@@ -7,6 +7,7 @@ const KEY = "buzz.v1";
 const fresh = () => ({
   profile: { name: "", level: 2, ai: true, voice: true, sound: true, quiet: false, noFloor: false, calm: false, onboarded: false, quizLater: false, q: null },
   honey: 0,
+  checks: [], // { t, energy, mood } : énergie notée sans séance
   logs: [],   // { t, kind, stateId, title, sec, completed, energyBefore, energyAfter, feel, honey, comeback, exIds }
   badges: {}, // { id: timestamp }
 });
