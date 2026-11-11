@@ -1,0 +1,10 @@
+{
+  "name": "buzz",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Buzz — app de mouvement pour cerveaux TDAH. Site statique + une fonction serveur (api/coach.js) pour le coach IA.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest"
+  }
+}

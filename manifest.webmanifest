@@ -1,0 +1,10 @@
+{
+  "name": "Buzz — bouge, ton cerveau suit",
+  "short_name": "Buzz",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#FBF6EC",
+  "theme_color": "#FBF6EC",
+  "lang": "fr",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
