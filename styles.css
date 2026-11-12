@@ -159,6 +159,17 @@ details summary { cursor: pointer; font-weight: 800; color: var(--muted); font-s
 .modes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; font-weight: 800; color: var(--muted); }
 .link { color: var(--ink); font-weight: 800; font-size: 14.5px; text-decoration: underline; text-underline-offset: 3px; text-align: left; min-height: 36px; }
 
+/* Rappels du quotidien */
+.needs { border-color: var(--honey); border-width: 2px; }
+.needs h2 .link { margin-left: auto; font-size: 13.5px; min-height: 0; }
+.need { display: grid; gap: 8px; }
+.need p { font-weight: 800; font-size: 16px; }
+.water { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 700; }
+.water b { font-size: 20px; font-weight: 900; }
+.rem { gap: 10px; }
+.rem .switch { padding: 4px 0; }
+.rem .row2 .field input { width: 100%; }
+
 /* Météo intérieure */
 .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .slot { display: flex; flex-direction: column; align-items: center; gap: 4px; }

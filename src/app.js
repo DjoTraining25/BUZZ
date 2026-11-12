@@ -12,6 +12,7 @@ import { buildSession, quickSession, swapStep, reward, hive, insights, weekDays,
 import { askCoach, sessionFromCoach, guessFromText } from "./coach.js";
 import { QUIZ, TRAITS, FREQ, draftFrom, prefill, applyQuiz, tuneFor, prefsFor, adaptations, traitsOf } from "./profile.js";
 import { STAGES, ANCHORS, DAY_LABELS, UP_AFTER, stageOf, newRoutine, evaluate, weekStart, planText, icsFor, energyInsights, SLOT_LABEL } from "./routine.js";
+import { REMINDERS, ORDER, EVERY, defaultsFor, slotsFor, dueNow, countToday, remindersIcs } from "./reminders.js";
 import * as store from "./store.js";
 import * as fx from "./fx.js";
 
@@ -21,7 +22,7 @@ const ui = {
   screen: S.profile.onboarded ? "main" : "onboard",
   tab: "home", energy: null, mood: null, session: null, result: null,
   quiz: null, quizStep: 0, coachText: "", coachBusy: false, modeToday: null,
-  ext: null,
+  ext: null, snoozed: {},
 };
 let P = null; // lecteur de séance en cours
 
@@ -40,6 +41,7 @@ const vib = (pattern) => { if (!S.profile.calm) fx.buzz(pattern); };
 const recent = () => S.logs.slice(-3).flatMap((l) => l.exIds || []);
 const previousFor = (stateId) => [...S.logs].reverse().find((l) => l.kind === "gen" && l.stateId === stateId)?.exIds || [];
 const persist = () => store.save(S);
+const rem = () => (S.profile.reminders ||= defaultsFor(traitsOf(S.profile)));
 const num = (x) => x.toFixed(1).replace(".", ",");
 const DAY = 864e5;
 
@@ -55,7 +57,7 @@ function toast(msg) {
 
 // ── Rendu ───────────────────────────────────────────────────────
 function render() {
-  const views = { onboard: viewOnboard, quiz: viewQuiz, player: viewPlayer, done: viewDone, ext: viewExt, main: viewMain };
+  const views = { onboard: viewOnboard, quiz: viewQuiz, player: viewPlayer, done: viewDone, ext: viewExt, rappels: viewRappels, main: viewMain };
   root.innerHTML = views[ui.screen]();
   if (ui.screen === "player") paintStep();
 }
@@ -158,6 +160,8 @@ function viewHome() {
     <span class="strip-l"><small>Palier ${ev.stage.n} · ${ev.stage.name}</small><b>${esc(planText(S.profile.routine))}</b></span>
     <span class="strip-r"><b>${ev.week.days}/${ev.stage.days}</b><small>jours</small></span>
   </button>` : ""}
+
+  ${needsCard()}
 
   <section class="card">
     <h2><span class="num">1</span>Ton énergie, là, maintenant</h2>
@@ -278,6 +282,12 @@ function viewRoutine() {
 
   <button class="btn ghost big" data-action="ext-open">➕ J'ai fait du sport ailleurs</button>
 
+  <section class="card">
+    <h2>Ton quotidien</h2>
+    <div class="water"><span>💧 <b>${countToday(S.needs, "water")}</b> verre${countToday(S.needs, "water") > 1 ? "s" : ""} d'eau aujourd'hui</span><button class="btn ghost" data-action="need-done" data-v="water">+1 verre</button></div>
+    <button class="btn ghost" data-action="rem-open">🔔 Mes rappels du quotidien</button>
+  </section>
+
   ${stagesList(st.n)}
 
   <section class="card about">
@@ -289,6 +299,64 @@ function viewRoutine() {
       <li><b>Le sport hors de l'appli compte.</b> Le but final, c'est une pratique à toi : course, salle, vélo, sport co…</li>
     </ul>
   </section>`;
+}
+
+function needsCard() {
+  const due = dueNow(rem(), S.needs, ui.snoozed);
+  if (!due.length) return "";
+  const water = rem().water.on ? countToday(S.needs, "water") : null;
+  return `<section class="card needs">
+    <h2>Petits besoins <button class="link sm" data-action="rem-open">Régler</button></h2>
+    ${due.slice(0, 2).map((d) => `<div class="need"><p>${esc(d.msg)}</p>
+      <div class="row2"><button class="btn primary" data-action="need-done" data-v="${d.key}">${REMINDERS[d.key].done}</button><button class="btn ghost" data-action="need-snooze" data-v="${d.key}">Dans 30 min</button></div></div>`).join("")}
+    ${water !== null ? `<small>💧 ${water} verre${water > 1 ? "s" : ""} d'eau aujourd'hui</small>` : ""}
+  </section>`;
+}
+
+function viewRappels() {
+  const cfg = rem();
+  const sw = (k) => `<button class="switch" role="switch" aria-checked="${cfg[k].on}" data-action="rem-toggle" data-v="${k}">
+      <span><b>${REMINDERS[k].emoji} ${REMINDERS[k].name}</b><small>${REMINDERS[k].why}</small></span><i></i></button>`;
+  const block = (k) => {
+    const R = REMINDERS[k], c = cfg[k];
+    if (!c.on) return `<section class="card rem">${sw(k)}</section>`;
+    let body = "";
+    if (R.kind === "interval") body = `
+      <div class="field">Toutes les
+        <div class="chips">${EVERY.map((m) => `<button class="chip sm ${c.every === m ? "on" : ""}" data-action="rem-every" data-v="${k}:${m}" aria-pressed="${c.every === m}">${m % 60 ? `${Math.floor(m / 60)} h 30` : `${m / 60} h`}</button>`).join("")}</div></div>
+      <div class="row2"><label class="field">De <input type="time" id="rem-from-${k}" value="${c.from}" /></label><label class="field">À <input type="time" id="rem-to-${k}" value="${c.to}" /></label></div>`;
+    else if (R.kind === "times") body = `
+      <div class="field">À quelles heures
+        <div class="chips">${R.options.map((t) => `<button class="chip sm ${c.times.includes(t) ? "on" : ""}" data-action="rem-opt" data-v="${k}:${t}" aria-pressed="${c.times.includes(t)}">${t.replace(":", " h ")}</button>`).join("")}</div></div>`;
+    else body = `<label class="field">À <input type="time" id="rem-time-${k}" value="${c.time}" /></label>`;
+    if ("weekdays" in c) body += `<button class="switch" role="switch" aria-checked="${c.weekdays}" data-action="rem-weekdays" data-v="${k}"><span><b>Jours de semaine seulement</b><small>Du lundi au vendredi</small></span><i></i></button>`;
+    const slots = slotsFor(k, c);
+    return `<section class="card rem">${sw(k)}${body}
+      <p class="sub">${slots.length} rappel${slots.length > 1 ? "s" : ""} par jour${slots.length ? ` · ex. « ${esc(slots[0].msg)} »` : ""}</p></section>`;
+  };
+  const total = ORDER.reduce((a, k) => a + slotsFor(k, cfg[k]).length, 0);
+  return `
+  <main class="page quiz">
+    <div class="p-top"><button class="icon" data-action="rem-close" aria-label="Retour">←</button></div>
+    <h1>Rappels du quotidien</h1>
+    <p class="sub">Avec un TDAH, ce n'est pas la mémoire qui lâche le plus : c'est le « au bon moment ». Un rappel extérieur fait ce travail à ta place.</p>
+    ${ORDER.map(block).join("")}
+    <section class="card">
+      <button class="btn primary big" data-action="rem-ics" ${total ? "" : "disabled"}>📅 Ajouter mes ${total} rappels au calendrier</button>
+      <p class="fine"><b>Pourquoi le calendrier ?</b> Buzz est une web-app : elle ne peut pas t'envoyer de notification quand elle est fermée. Les alarmes du calendrier, elles, sonnent toujours. Quand Buzz est ouvert, les rappels dus apparaissent aussi en haut de l'écran Bouger.</p>
+      <p class="fine"><b>Astuce iPhone :</b> crée d'abord un calendrier « Buzz » dans l'app Calendrier, puis choisis-le au moment d'ajouter les rappels. Tu pourras tout masquer ou supprimer d'un coup. Si tu changes tes réglages, supprime ce calendrier et ajoute à nouveau.</p>
+    </section>
+  </main>`;
+}
+
+function download(text, filename) {
+  const blob = new Blob([text], { type: "text/calendar;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
 function stagesList(current) {
@@ -475,6 +543,8 @@ function viewSettings() {
     ${lines.length ? `<p class="sub">Ce que ça change :</p><ul class="adapt">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : `<p class="sub">Réglages standards. Le questionnaire (2 min) adapte les séances à ton fonctionnement.</p>`}
     <button class="btn ghost" data-action="quiz-open">${p.q?.done ? "Refaire le questionnaire" : "Répondre au questionnaire"}</button>
   </section>
+
+  <button class="btn ghost big" data-action="rem-open">🔔 Rappels du quotidien <small>eau, repas, pauses, coucher…</small></button>
 
   <section class="card switches">
     ${sw("ai", "Coach IA", "Les mots que tu écris au coach sont envoyés à Claude (Anthropic) pour composer la séance. Désactivé : rien ne quitte l'appareil.")}
@@ -705,6 +775,12 @@ function setStage(n) {
   if (got.length) toast(`Badge : ${got.map((b) => b.name).join(", ")}`);
 }
 
+function keepScroll() {
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+}
+
 const actions = {
   "ob-skip": () => { S.profile.onboarded = true; persist(); ui.screen = "main"; render(); },
   "quiz-open": () => { Object.assign(ui, { screen: "quiz", quiz: draftFrom(S.profile), quizStep: 0 }); render(); window.scrollTo(0, 0); },
@@ -856,16 +932,36 @@ const actions = {
   "r-ics": () => {
     const r = S.profile.routine;
     if (!r.time || !r.days.length) return;
-    const url = location.origin + location.pathname;
-    const blob = new Blob([icsFor(r, url)], { type: "text/calendar;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "buzz-routine.ics";
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    download(icsFor(r, location.origin + location.pathname), "buzz-routine.ics");
     toast("Ouvre le fichier pour l'ajouter à ton calendrier.");
   },
+  // Rappels du quotidien
+  "rem-open": () => { rem(); persist(); Object.assign(ui, { screen: "rappels" }); render(); window.scrollTo(0, 0); },
+  "rem-close": () => { ui.screen = "main"; render(); window.scrollTo(0, 0); },
+  "rem-toggle": (k) => { rem()[k].on = !rem()[k].on; persist(); keepScroll(); },
+  "rem-weekdays": (k) => { rem()[k].weekdays = !rem()[k].weekdays; persist(); keepScroll(); },
+  "rem-every": (v) => { const [k, m] = v.split(":"); rem()[k].every = +m; persist(); keepScroll(); },
+  "rem-opt": (v) => {
+    const k = v.slice(0, v.indexOf(":")), t = v.slice(v.indexOf(":") + 1), c = rem()[k];
+    c.times = c.times.includes(t) ? c.times.filter((x) => x !== t) : [...c.times, t].sort();
+    persist();
+    keepScroll();
+  },
+  "rem-ics": () => {
+    download(remindersIcs(rem(), location.origin + location.pathname), "buzz-rappels.ics");
+    toast("Ouvre le fichier pour ajouter tes rappels au calendrier.");
+  },
+  "need-done": (k) => {
+    const now = Date.now();
+    S.needs = S.needs.filter((n) => now - n.t < 60 * DAY);
+    S.needs.push({ t: now, kind: k });
+    S.honey += 2;
+    const got = grantBadges();
+    persist();
+    keepScroll();
+    toast(k === "water" ? `+2 🍯 · ${countToday(S.needs, "water")} verre${countToday(S.needs, "water") > 1 ? "s" : ""} aujourd'hui${got.length ? ` · Badge : ${got.map((b) => b.name).join(", ")}` : ""}` : `+2 🍯 · noté${got.length ? ` · Badge : ${got.map((b) => b.name).join(", ")}` : ""}`);
+  },
+  "need-snooze": (k) => { ui.snoozed[k] = Date.now() + 30 * 6e4; keepScroll(); },
   // Sport ailleurs
   "ext-open": () => { Object.assign(ui, { screen: "ext", ext: { act: null, min: null, after: null }, from: ui.tab }); render(); window.scrollTo(0, 0); },
   "ext-cancel": () => { ui.screen = "main"; render(); },
@@ -904,6 +1000,8 @@ root.addEventListener("input", (e) => {
 
 root.addEventListener("change", (e) => {
   if (e.target.id === "r-time") { S.profile.routine.time = e.target.value || null; persist(); render(); }
+  const m = e.target.id.match(/^rem-(from|to|time)-(\w+)$/);
+  if (m && e.target.value) { rem()[m[2]][m[1]] = e.target.value; persist(); keepScroll(); }
 });
 
 // Écran verrouillé ou onglet caché pendant une séance : on met en pause plutôt que de laisser filer le temps.

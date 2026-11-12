@@ -100,6 +100,31 @@ const local = (d) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate(
 const utc = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
 const txt = (s) => s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
 
+// Calendrier .ics générique : un événement récurrent par rappel, avec une alarme à l'heure pile.
+export function icsCalendar(events, now = new Date()) {
+  const out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Buzz//Rappels//FR", "CALSCALE:GREGORIAN"];
+  events.forEach((e, i) => {
+    out.push(
+      "BEGIN:VEVENT",
+      `UID:buzz-${e.id || i}-${now.getTime()}@buzz.app`,
+      `DTSTAMP:${utc(now)}`,
+      `DTSTART:${local(e.start)}`,
+      `DURATION:PT${e.minutes || 5}M`,
+      `RRULE:${e.rrule}`,
+      "TRANSP:TRANSPARENT", // n'apparaît pas comme « occupé »
+      `SUMMARY:${txt(e.summary)}`,
+      ...(e.description ? [`DESCRIPTION:${txt(e.description)}`] : []),
+      ...(e.url ? [`URL:${e.url}`] : []),
+      "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${txt(e.summary)}`, "TRIGGER:PT0M", "END:VALARM",
+      "END:VEVENT",
+    );
+  });
+  out.push("END:VCALENDAR");
+  return out.join("\r\n");
+}
+
+export const rruleDays = (days) => `FREQ=WEEKLY;BYDAY=${days.map((d) => BYDAY[d]).join(",")}`;
+
 export function icsFor(routine, url, now = new Date()) {
   const [h, m] = (routine.time || "18:30").split(":").map(Number);
   const days = (routine.days?.length ? routine.days : defaultDays(3)).slice().sort((a, b) => a - b);

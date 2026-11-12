@@ -8,6 +8,7 @@ const fresh = () => ({
   profile: { name: "", level: 2, ai: true, voice: true, sound: true, quiet: false, noFloor: false, calm: false, onboarded: false, quizLater: false, q: null },
   honey: 0,
   checks: [], // { t, energy, mood } : énergie notée sans séance
+  needs: [],  // { t, kind } : rappels du quotidien cochés (eau, repas…)
   logs: [],   // { t, kind, stateId, title, sec, completed, energyBefore, energyAfter, feel, honey, comeback, exIds }
   badges: {}, // { id: timestamp }
 });

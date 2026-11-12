@@ -168,6 +168,7 @@ export const BADGES = [
   { id: "terrain", emoji: "🏟️", name: "Sur le terrain", desc: "Du sport noté hors de l'appli", test: (s) => s.logs.some((l) => l.kind === "ext") },
   { id: "ancre", emoji: "⚓", name: "Ancré·e", desc: "Palier 2 de la routine atteint", test: (s) => (s.profile.routine?.stage || 0) >= 2 },
   { id: "regulier", emoji: "🏅", name: "Régulier·e", desc: "Palier 5 : le repère de l'OMS", test: (s) => (s.profile.routine?.stage || 0) >= 5 },
+  { id: "eau", emoji: "🫗", name: "Bien hydraté·e", desc: "6 verres d'eau notés dans une journée", test: (s) => Math.max(0, ...Object.values((s.needs || []).filter((n) => n.kind === "water").reduce((a, n) => { const d = new Date(n.t).toDateString(); a[d] = (a[d] || 0) + 1; return a; }, {}))) >= 6 },
   { id: "night", emoji: "🦉", name: "Oiseau de nuit", desc: "Une descente vers le sommeil", test: (s) => s.logs.some((l) => l.kind === "dodo") },
 ];
 
