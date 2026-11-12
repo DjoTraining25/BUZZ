@@ -4,6 +4,7 @@
 //  intensity : 1 doux · 2 moyen · 3 fort
 //  jump      : fait du bruit / saute (exclu en mode discret)
 //  floor     : passage au sol (exclu si "sans sol")
+//  sides     : on change de côté à la mi-temps (signal sonore et visuel)
 //  complex   : coordination ou équilibre exigeants (exclu si profil dyspraxie)
 // ════════════════════════════════════════════════════════════════
 
@@ -39,14 +40,14 @@ export const EXERCISES = [
 
   // ── Coordination : réveiller le cerveau (les deux hémisphères bossent)
   ex("croise", "Genou-coude croisé", "🔀", "coord", 1, "Debout : coude droit vers genou gauche, puis l'inverse."),
-  ex("equilibre", "Équilibre sur une jambe", "🦩", "coord", 1, "Fixe un point devant toi. Change de jambe à mi-temps."),
+  ex("equilibre", "Équilibre sur une jambe", "🦩", "coord", 1, "Fixe un point devant toi. Change de jambe au signal de mi-temps.", { sides: true }),
   ex("talonpointe", "Marche du funambule", "🎪", "coord", 1, "Avance un pied juste devant l'autre, talon contre pointe."),
   ex("touchearriere", "Main-pied croisé derrière", "🔁", "coord", 2, "Main droite touche le pied gauche derrière toi. Alterne vite.", { complex: true }),
   ex("lancer", "Lancer-rattraper", "🤹", "coord", 1, "Prends un objet (balle, chaussette). Lance d'une main, rattrape de l'autre.", { complex: true }),
   ex("ours", "Marche de l'ours", "🐻", "coord", 3, "À quatre pattes, genoux décollés. Avance et recule.", { floor: true }),
   ex("croix", "Pas en croix", "✚", "coord", 2, "Avant, centre, droite, centre, arrière, centre, gauche. Accélère.", { complex: true }),
   ex("huit", "Huit couchés avec les bras", "♾️", "coord", 1, "Dessine un grand 8 couché devant toi, suis ta main des yeux."),
-  ex("yeuxfermes", "Équilibre yeux fermés", "🙈", "coord", 2, "Sur une jambe, ferme les yeux. Plus dur qu'il n'y paraît.", { complex: true }),
+  ex("yeuxfermes", "Équilibre yeux fermés", "🙈", "coord", 2, "Sur une jambe, ferme les yeux. Change de jambe au signal.", { complex: true, sides: true }),
   ex("birddog", "Bird-dog", "🐕", "coord", 1, "À quatre pattes, tends bras droit et jambe gauche. Alterne.", { floor: true }),
   ex("rythme", "Tape le rythme", "🥁", "coord", 2, "Cuisses, mains, cuisses, claque des doigts. Accélère sans te tromper.", { complex: true }),
 
@@ -54,10 +55,10 @@ export const EXERCISES = [
   ex("chatvache", "Chat-vache", "🐈", "mobilite", 1, "À quatre pattes, arrondis le dos, puis creuse-le doucement.", { floor: true }),
   ex("rotations", "Rotations du buste", "🌀", "mobilite", 1, "Pieds ancrés, laisse les bras fouetter d'un côté à l'autre."),
   ex("cerclesbras", "Grands cercles de bras", "🌬️", "mobilite", 1, "Cercles amples vers l'avant, puis vers l'arrière."),
-  ex("coureur", "Fente basse du coureur", "🧎", "mobilite", 1, "Grande fente, mains au sol, ouvre un bras vers le ciel.", { floor: true }),
+  ex("coureur", "Fente basse du coureur", "🧎", "mobilite", 1, "Grande fente, mains au sol, ouvre un bras vers le ciel. Change de jambe au signal.", { floor: true, sides: true }),
   ex("enroule", "Enroulé de colonne", "🐚", "mobilite", 1, "Debout, déroule le dos vertèbre par vertèbre vers le sol. Remonte lentement."),
   ex("hanches", "Cercles de hanches", "⭕", "mobilite", 1, "Mains sur les hanches, dessine de grands cercles."),
-  ex("cou", "Étirement du cou", "🦒", "mobilite", 1, "Oreille vers l'épaule, sans forcer. Change de côté."),
+  ex("cou", "Étirement du cou", "🦒", "mobilite", 1, "Oreille vers l'épaule, sans forcer. Change de côté au signal.", { sides: true }),
   ex("enfant", "Posture de l'enfant", "🙇", "mobilite", 1, "À genoux, front au sol, bras devant. Laisse-toi fondre.", { floor: true }),
   ex("chien", "Chien tête en bas", "🔺", "mobilite", 1, "Mains et pieds au sol, fesses vers le ciel. Pédale doucement.", { floor: true }),
   ex("poitrine", "Ouverture de poitrine", "🫶", "mobilite", 1, "Croise les mains dans le dos, ouvre les épaules, regarde devant."),

@@ -339,6 +339,7 @@ function viewPlayer() {
         <svg viewBox="0 0 200 200" aria-hidden="true">
           <circle class="track" cx="100" cy="100" r="88" />
           <circle class="prog" id="p-ring" cx="100" cy="100" r="88" transform="rotate(-90 100 100)" />
+          <circle class="half-dot" id="p-half" cx="100" cy="188" r="9" />
         </svg>
         <div class="ring-in"><div class="p-emoji" id="p-emoji" aria-hidden="true"></div><div class="p-time" id="p-time"></div></div>
       </div>
@@ -526,7 +527,7 @@ function startPlayer(session) {
   P = {
     session, steps: session.steps.map((s) => ({ ...s })),
     i: 0, phase: "ready", ready: session.ready || READY_SEC, left: session.ready || READY_SEC, paused: false, done: 0,
-    last: performance.now(), lastWhole: null, timer: null,
+    last: performance.now(), lastWhole: null, timer: null, half: false, flashUntil: 0,
   };
   ui.screen = "player";
   render();
@@ -551,14 +552,46 @@ function tick() {
     P.lastWhole = whole;
     if (S.profile.sound && whole > 0 && whole <= 3) fx.beep(P.phase === "ready" ? 520 : 660, 0.1);
   }
+  const st = P.steps[P.i];
+  if (P.phase === "work" && !P.half && st.sec >= 20 && P.left <= st.sec / 2) halfway(st);
   if (P.left <= 0) return advance();
   paintTime();
+}
+
+// Mi-temps : un repère dans le temps qui passe, et le signal pour changer de côté.
+function halfway(st) {
+  P.half = true;
+  P.flashUntil = performance.now() + 2500;
+  if (S.profile.sound) { fx.beep(990, 0.08); setTimeout(() => fx.beep(990, 0.08), 140); }
+  vib([30, 50, 30]);
+  if (S.profile.voice) fx.speak(st.ex.sides ? "Change de côté" : "Mi-temps");
+  paintPhase();
+}
+
+function paintPhase() {
+  const st = P.steps[P.i], next = P.steps[P.i + 1], el = document.getElementById("p-phase");
+  if (!el) return;
+  const flash = performance.now() < P.flashUntil;
+  let text;
+  if (P.phase === "ready") text = P.i === 0 ? "Prépare-toi" : "Nouvel exercice · prépare-toi";
+  else if (flash) text = st.ex.sides ? "↔ Change de côté" : "Mi-temps 💪";
+  else if (P.left <= 3) text = next ? "On change bientôt" : "Dernières secondes";
+  else text = P.half ? "2ᵉ moitié" : "Vas-y";
+  el.textContent = text;
+  el.classList.toggle("flash", flash);
+  const player = document.querySelector(".player");
+  player.dataset.phase = P.phase;
+  player.classList.toggle("ending", P.phase === "work" && P.left <= 3);
+  const dot = document.getElementById("p-half");
+  dot.classList.toggle("hidden", P.phase !== "work" || st.sec < 20);
+  dot.classList.toggle("passed", P.half);
 }
 
 function advance() {
   if (P.phase === "ready") {
     P.phase = "work";
     P.left = P.steps[P.i].sec;
+    P.half = false;
     if (S.profile.sound) fx.beep(880, 0.3);
     vib(60);
     paintStep();
@@ -570,6 +603,7 @@ function nextStep() {
   P.i++;
   P.phase = "ready";
   P.left = P.ready;
+  P.half = false;
   vib([40, 60, 40]);
   announce();
   paintStep();
@@ -579,12 +613,10 @@ function paintStep() {
   const st = P.steps[P.i], next = P.steps[P.i + 1], $ = (id) => document.getElementById(id);
   $("p-segs").innerHTML = P.steps.map((_, k) => `<i class="${k < P.i ? "past" : k === P.i ? "cur" : ""}"></i>`).join("");
   $("p-count").textContent = `${P.i + 1}/${P.steps.length}`;
-  $("p-phase").textContent = P.phase === "ready" ? "Prépare-toi" : "Vas-y";
   $("p-emoji").textContent = st.ex.emoji;
   $("p-name").textContent = st.ex.name;
   $("p-cue").textContent = st.ex.cue;
   $("p-next").textContent = next ? `Ensuite : ${next.ex.name}` : "Dernier exercice";
-  document.querySelector(".player").dataset.phase = P.phase;
   paintTime();
 }
 
@@ -600,6 +632,7 @@ function paintTime() {
   for (let k = P.i + 1; k < P.steps.length; k++) rest += P.steps[k].sec + P.ready;
   const next = P.steps[P.i + 1];
   document.getElementById("p-next").textContent = `${next ? `Ensuite : ${next.ex.name}` : "Dernier exercice"} · reste ${fmtClock(rest)}`;
+  paintPhase();
 }
 
 function finish(completed) {
@@ -777,6 +810,7 @@ const actions = {
     P.steps[P.i] = { ...P.steps[P.i], ex: e };
     P.phase = "ready";
     P.left = P.ready;
+    P.half = false;
     announce();
     paintStep();
   },

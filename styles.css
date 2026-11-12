@@ -194,6 +194,17 @@ details summary { cursor: pointer; font-weight: 800; color: var(--muted); font-s
 .p-ctrl { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 8px; }
 .p-ctrl .btn { padding: 13px 6px; font-size: 15px; min-height: 56px; }
 .player.paused .ring { opacity: .45; }
+/* Repère de mi-temps : un point en bas de l'anneau, plein une fois passé */
+.ring .half-dot { fill: var(--bg); stroke: var(--ink); stroke-width: 4; transition: fill .2s; }
+.ring .half-dot.passed { fill: var(--sage); stroke: var(--sage); }
+.ring .half-dot.hidden { display: none; }
+.p-phase.flash { color: var(--card) !important; background: var(--sage); padding: 6px 14px; border-radius: 999px; font-size: 15px; animation: pop .2s ease-out; }
+/* Dernières secondes : l'anneau passe au vert et l'exercice suivant ressort */
+.player.ending .ring .prog { stroke: var(--sage); }
+.player.ending .p-next { color: var(--ink); font-size: 16px; font-weight: 900; }
+.player.ending .p-phase { color: var(--sage); }
+@keyframes pulse { 50% { transform: scale(1.04); } }
+.player.ending .ring { animation: pulse 1s ease-in-out infinite; }
 
 /* Fin de séance */
 .done { align-items: stretch; text-align: center; padding-bottom: 32px; }
