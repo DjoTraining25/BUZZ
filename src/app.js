@@ -52,7 +52,7 @@ function toast(msg) {
   t.setAttribute("role", "status");
   t.textContent = msg;
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3200);
+  setTimeout(() => t.remove(), Math.max(3200, msg.length * 70)); // le temps de lire
 }
 
 // ── Rendu ───────────────────────────────────────────────────────
@@ -848,7 +848,7 @@ const actions = {
     if (text.length < 3) return toast("Écris quelques mots, même en vrac.");
     ui.coachBusy = true;
     render();
-    let s = null;
+    let s = null, why = null;
     if (S.profile.ai) {
       try {
         const now = Date.now(), t = tune();
@@ -857,14 +857,15 @@ const actions = {
           quiet: S.profile.quiet, noFloor: S.profile.noFloor, simple: t.simple, prefs: prefsFor(t, mode()), hour: new Date().getHours(),
           history: S.logs.slice(-8).map((l) => ({ title: l.title, min: Math.round(l.sec / 60), energyBefore: l.energyBefore, energyAfter: l.energyAfter, feel: l.feel, daysAgo: Math.floor((now - l.t) / DAY) })),
         }), t.ready);
-      } catch { /* hors ligne, serveur absent ou refus : on passe aux règles locales */ }
+        if (!s) why = "séance reçue inutilisable";
+      } catch (e) { why = e.message; /* hors ligne, serveur absent ou refus : on passe aux règles locales */ }
     }
     if (!s) {
       const g = guessFromText(text);
       const mine = !ui.inferred; // ce que la personne a coché elle-même passe avant la devinette
       const stateId = (mine && ui.mood) || g.stateId;
       s = buildSession({ energy: (mine && ui.energy) || g.energy, stateId, level: S.profile.level, minutes: g.minutes, opts: opts(), recent: recent(), previous: previousFor(stateId) });
-      if (S.profile.ai) toast("Coach IA injoignable : séance préparée sans lui.");
+      if (S.profile.ai) toast(`Coach IA indisponible (${why}) : séance préparée sans lui.`);
     }
     ui.coachBusy = false;
     if (ui.screen !== "main") return; // la personne est déjà partie bouger : on ne touche à rien

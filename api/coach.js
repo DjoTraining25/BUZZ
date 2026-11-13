@@ -157,7 +157,8 @@ export default async function handler(req, res) {
     console.error("Erreur du coach :", error);
     if (error instanceof Anthropic.RateLimitError) return res.status(429).json({ error: "Coach très sollicité, réessaie dans un moment" });
     if (error instanceof Anthropic.APIConnectionError) return res.status(503).json({ error: "Coach injoignable" });
-    if (error instanceof Anthropic.APIError) return res.status(502).json({ error: "Erreur du service IA" });
-    return res.status(500).json({ error: "Échec de la génération" });
+    // Raison courte renvoyée à l'app (jamais la clé) : clé invalide, modèle inconnu, requête refusée…
+    if (error instanceof Anthropic.APIError) return res.status(502).json({ error: `service IA : ${error.status ?? "?"} ${String(error.message || "").slice(0, 140)}` });
+    return res.status(500).json({ error: `échec de la génération : ${String(error?.message || error).slice(0, 140)}` });
   }
 }

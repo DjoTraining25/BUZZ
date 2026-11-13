@@ -7,15 +7,27 @@
 import { EX_BY_ID, STATE_BY_ID } from "./data.js";
 import { READY_SEC } from "./engine.js";
 
+// En cas d'échec, l'erreur porte une raison lisible : on l'affiche pour pouvoir diagnostiquer.
 export async function askCoach(payload) {
-  const res = await fetch("api/coach", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(25000),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  let res;
+  try {
+    res = await fetch("api/coach", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(45000),
+    });
+  } catch (e) {
+    throw new Error(e?.name === "TimeoutError" ? "pas de réponse en 45 s" : navigator.onLine === false ? "pas de connexion" : "serveur injoignable");
+  }
+  let data = null;
+  try { data = await res.json(); } catch { /* page d'erreur non JSON */ }
+  if (!res.ok) {
+    const why = data?.error || (res.status === 404 ? "fonction /api/coach introuvable" : res.status === 504 ? "délai dépassé côté serveur" : "erreur serveur");
+    throw new Error(`${why} (HTTP ${res.status})`);
+  }
+  if (!data) throw new Error("réponse illisible");
+  return data;
 }
 
 // Réponse du serveur → séance jouable (même forme que celles du moteur de règles).
