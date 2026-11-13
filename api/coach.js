@@ -6,24 +6,25 @@
 // quelques mots et son contexte (énergie, historique), donc l'adresse ne peut pas servir
 // de relais IA gratuit pour autre chose que composer une séance Buzz.
 
-import Anthropic from "@anthropic-ai/sdk";
-import { EXERCISES, EX_BY_ID, STATES, STATE_BY_ID } from "../src/data.js";
-
-const client = new Anthropic(); // lit ANTHROPIC_API_KEY
+// Tout est chargé au premier appel, à l'intérieur du handler : si la clé ou une dépendance
+// manque, la fonction répond une erreur lisible en JSON au lieu de planter au démarrage
+// (le SDK refuse de se construire sans clé, ce qui donnait un « HTTP 500 » muet).
 const MODEL = process.env.BUZZ_COACH_MODEL || "claude-opus-5-5";
 const MINUTES = [2, 3, 5, 8, 12, 16];
 const MAX_TEXT = 400;
-
 const TYPE_LABEL = { cardio: "cardio", force: "force", coord: "coordination", mobilite: "mobilité", calme: "retour au calme" };
 
-const CATALOG = EXERCISES.map((e) =>
-  `${e.id} | ${e.name} | ${TYPE_LABEL[e.type]} | intensité ${e.intensity}/3${e.jump ? " | saut" : ""}${e.floor ? " | au sol" : ""}${e.complex ? " | coordination complexe" : ""}`
-).join("\n");
-
-const SHAPES = STATES.map((s) => `${s.id} — « ${s.title} » : ${s.why}`).join("\n");
-
-// Prompt stable (mis en cache) : tout ce qui varie d'une demande à l'autre va dans le message utilisateur.
-const SYSTEM = `Tu es le coach de Buzz, une application de mouvement pensée pour les adultes TDAH. La personne t'écrit quelques mots sur son état du moment ; tu composes la séance qui lui convient maintenant, à partir du catalogue ci-dessous.
+let booting = null;
+function boot() {
+  booting ||= (async () => {
+    const [{ default: Anthropic }, data] = await Promise.all([import("@anthropic-ai/sdk"), import("../src/data.js")]);
+    const { EXERCISES, STATES } = data;
+    const CATALOG = EXERCISES.map((e) =>
+      `${e.id} | ${e.name} | ${TYPE_LABEL[e.type]} | intensité ${e.intensity}/3${e.jump ? " | saut" : ""}${e.floor ? " | au sol" : ""}${e.complex ? " | coordination complexe" : ""}`
+    ).join("\n");
+    const SHAPES = STATES.map((st) => `${st.id} — « ${st.title} » : ${st.why}`).join("\n");
+    // Prompt stable (mis en cache) : tout ce qui varie d'une demande à l'autre va dans le message utilisateur.
+    const SYSTEM = `Tu es le coach de Buzz, une application de mouvement pensée pour les adultes TDAH. La personne t'écrit quelques mots sur son état du moment ; tu composes la séance qui lui convient maintenant, à partir du catalogue ci-dessous.
 
 Pourquoi l'app existe : avec un TDAH, démarrer est le plus dur, l'énergie change d'heure en heure, la routine lasse vite, et un échec perçu (trop dur, trop long, série cassée) mène vite à l'abandon. Une séance courte réellement faite vaut mieux qu'une séance idéale jamais commencée. En cas de doute, choisis plus court et plus doux.
 
@@ -46,19 +47,22 @@ Limites : tu n'es ni médecin ni thérapeute, et Buzz ne remplace pas un suivi. 
 
 Catalogue (id | nom | type | intensité | contraintes) :
 ${CATALOG}`;
-
-const SCHEMA = {
-  type: "object",
-  properties: {
-    message: { type: "string" },
-    stateId: { type: "string", enum: STATES.map((s) => s.id) },
-    energy: { type: "integer", enum: [1, 2, 3, 4, 5] },
-    minutes: { type: "integer", enum: MINUTES },
-    exerciseIds: { type: "array", items: { type: "string", enum: EXERCISES.map((e) => e.id) } },
-  },
-  required: ["message", "stateId", "energy", "minutes", "exerciseIds"],
-  additionalProperties: false,
-};
+    const SCHEMA = {
+      type: "object",
+      properties: {
+        message: { type: "string" },
+        stateId: { type: "string", enum: STATES.map((s) => s.id) },
+        energy: { type: "integer", enum: [1, 2, 3, 4, 5] },
+        minutes: { type: "integer", enum: MINUTES },
+        exerciseIds: { type: "array", items: { type: "string", enum: EXERCISES.map((e) => e.id) } },
+      },
+      required: ["message", "stateId", "energy", "minutes", "exerciseIds"],
+      additionalProperties: false,
+    };
+    return { Anthropic, client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }), data, SYSTEM, SCHEMA };
+  })().catch((e) => { booting = null; throw e; }); // on retentera au prochain appel
+  return booting;
+}
 
 // Frein simple par adresse IP. Sur du serverless la mémoire ne survit pas toujours d'un appel
 // à l'autre : c'est un garde-fou, pas une vraie protection. La vraie viendra avec les comptes.
@@ -85,7 +89,7 @@ const PREFS = {
 
 const int = (v, min, max) => (Number.isInteger(v) && v >= min && v <= max ? v : null);
 
-function describe(body) {
+function describe(body, { STATE_BY_ID }) {
   const levels = { 1: "doux (reprise)", 2: "moyen", 3: "costaud (sportif)" };
   const history = (Array.isArray(body.history) ? body.history : []).slice(-8).map((h) => ({
     seance: String(h.title || "").slice(0, 40),
@@ -113,12 +117,22 @@ export default async function handler(req, res) {
     console.error("ANTHROPIC_API_KEY manquante dans les variables d'environnement Vercel");
     return res.status(500).json({ error: "Coach IA non configuré côté serveur" });
   }
-  const body = req.body || {};
+  let body = req.body || {};
+  if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
   if (typeof body.text !== "string" || body.text.trim().length < 3) {
     return res.status(400).json({ error: "Texte manquant" });
   }
-  const ip = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "inconnu";
+  const ip = String(req.headers?.["x-forwarded-for"] || "").split(",")[0].trim() || "inconnu";
   if (tooMany(ip)) return res.status(429).json({ error: "Trop de demandes, réessaie dans un moment" });
+
+  let ctx;
+  try {
+    ctx = await boot();
+  } catch (error) {
+    console.error("Démarrage du coach impossible :", error);
+    return res.status(500).json({ error: `démarrage impossible : ${String(error?.message || error).slice(0, 160)}` });
+  }
+  const { Anthropic, client, data, SYSTEM, SCHEMA } = ctx;
 
   try {
     const msg = await client.messages.create({
@@ -126,7 +140,7 @@ export default async function handler(req, res) {
       max_tokens: 4000,
       cache_control: { type: "ephemeral" },
       system: SYSTEM,
-      messages: [{ role: "user", content: describe(body) }],
+      messages: [{ role: "user", content: describe(body, data) }],
       output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
     });
 
@@ -139,7 +153,7 @@ export default async function handler(req, res) {
     // On ne fait pas confiance aveuglément : contraintes re-vérifiées, doublons retirés.
     const seen = new Set();
     const exerciseIds = out.exerciseIds.filter((id) => {
-      const e = EX_BY_ID[id];
+      const e = data.EX_BY_ID[id];
       if (!e || seen.has(id) || (body.quiet && e.jump) || (body.noFloor && e.floor) || (body.simple && e.complex)) return false;
       seen.add(id);
       return true;
